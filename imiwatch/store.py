@@ -46,6 +46,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "systemone_api_key": "",
     "systemone_model": "jev-latest",
     "systemone_image_mode": "none",  # none / clef / perplexity
+    # jev-local（imajev-4b を自前の GPU サーバーで動かす。SSH トンネル越しの 127.0.0.1:8008 を想定）
+    "jevlocal_base_url": "http://127.0.0.1:8008",
+    "jevlocal_api_key": "",
     # OpenRouter（判定の設計役 LLM と、LLM による判定の代用）
     "openrouter_api_key": "",
     "planner_model": "openrouter/auto",
@@ -63,6 +66,7 @@ _ENV_KEYS = {
     "perplexity_api_key": "PERPLEXITY_API_KEY",
     "systemone_api_key": "TYPESAFE_API_KEY",
     "openrouter_api_key": "OPENROUTER_API_KEY",
+    "jevlocal_api_key": "KEV_API_KEY",
 }
 
 

@@ -88,8 +88,10 @@ class MonitorRuntime:
         self.prev_fp = fp
         values = normalize_answers(m.plan, answers)
         metric = compute_metric(m.plan, values)
+        held = [qid for qid, a in answers.items() if isinstance(a, dict) and a.get("abstained")]
         r = Result(m.id, ts, "ok", metric=metric, values=values, answers=answers,
-                   provider=provider, latency_ms=latency, image=small)
+                   provider=provider, latency_ms=latency, image=small,
+                   error=f"判断保留: {', '.join(held)}" if held else "")
         # 通知は実際に判定したときだけ数える（使い回しの値で連続回数を稼がない）
         if record:
             r.notified = self.notify_state.update(m.plan, metric)

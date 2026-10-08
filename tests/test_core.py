@@ -258,3 +258,103 @@ def test_capture_helpers():
     fp = capture.fingerprint(small)
     assert capture.diff_score(fp, fp) == 0
     assert capture.diff_score(None, fp) == float("inf")
+
+
+# ------------------------------------------------------------------ jev-local（imajev）
+def _many_questions(n):
+    return {f"q.{i}-x": {"type": "noul", "instructions": f"check {i}"} for i in range(n)}
+
+
+def test_jevlocal_request_shape_and_chunking():
+    import re
+
+    from imiwatch.judges.jevlocal import JevLocalJudge
+
+    q = api_questions(validate_plan(PLAN))
+    q.update(_many_questions(7))  # 合計10問 → 8 + 2 に分割
+    reqs = JevLocalJudge(store.load_settings()).build_requests("data:image/jpeg;base64,AA", q)
+    assert [len(b["fields"]) for b, _ in reqs] == [8, 2]
+    body, idmap = reqs[0]
+    assert set(body) == {"request_id", "state", "images", "fields"}  # 新契約にない項目は送らない
+    assert body["images"] == ["data:image/jpeg;base64,AA"]
+    for f in body["fields"]:
+        assert re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", f["id"])
+    types = {idmap[f["id"]]: f for f in body["fields"]}
+    assert types["floor"]["type"] == "boolean"
+    assert types["desk"]["type"] == "ordinal" and [lv["value"] for lv in types["desk"]["levels"]] == [0, 1, 2]
+    assert types["kind"]["type"] == "choice" and [o["value"] for o in types["kind"]["options"]] == ["clothes", "paper", "other"]
+    all_ids = [qid for _, m in reqs for qid in m.values()]
+    assert sorted(all_ids) == sorted(q)
+
+
+def test_jevlocal_answers_and_abstain_skip_metric():
+    from imiwatch.judges.jevlocal import JevLocalJudge
+
+    p = validate_plan(PLAN)
+    to = JevLocalJudge.to_answer
+    answers = {
+        "floor": to(p["questions"]["floor"], {"status": "answered", "value": True,
+                                              "scores": {"false": 0.2, "true": 0.7, "__unknown__": 0.1}}),
+        "desk": to(p["questions"]["desk"], {"status": "answered", "value": 2,
+                                            "scores": {"0": 0.0, "1": 0.25, "2": 0.5, "__unknown__": 0.25}}),
+        "kind": to(p["questions"]["kind"], {"status": "abstained", "value": None, "reason": "insufficient_evidence",
+                                            "scores": {"clothes": 0.1, "paper": 0.1, "other": 0.0, "__unknown__": 0.8}}),
+    }
+    assert answers["floor"]["noul"] == 0.7  # 不明は「はい」に混ぜない
+    assert answers["desk"]["score"] == pytest.approx((0.25 + 2 * 0.5) / 0.75)
+    assert answers["kind"]["abstained"] is True
+    v = normalize_answers(p, answers)
+    assert "kind" not in v  # 判断保留は指標から外れる
+    assert compute_metric(p, v) == pytest.approx((0.7 + 2 * v["desk"]) / 3)
+
+
+def test_jevlocal_end_to_end(monkeypatch):
+    from imiwatch.judges.jevlocal import JevLocalJudge
+
+    calls = []
+
+    class Resp:
+        status_code = 200
+        text = ""
+
+        def __init__(self, body):
+            self.body = body
+
+        def json(self):
+            res = {}
+            for f in self.body["fields"]:
+                keys = {"boolean": ["false", "true"], "choice": [o["value"] for o in f.get("options", [])],
+                        "ordinal": [str(lv["value"]) for lv in f.get("levels", [])]}[f["type"]]
+                scores = {k: 0.9 / len(keys) for k in keys}
+                scores["__unknown__"] = 0.1
+                value = {"boolean": True, "choice": keys[0], "ordinal": 0}[f["type"]]
+                res[f["id"]] = {"status": "answered", "value": value, "scores": scores}
+            return {"request_id": self.body["request_id"], "model": "imajev-4b", "results": res}
+
+    def fake_post(url, headers, json, timeout):
+        calls.append((url, headers.get("Authorization")))
+        return Resp(json)
+
+    monkeypatch.setattr("imiwatch.judges.base.requests.post", fake_post)
+    s = {**store.load_settings(), "jevlocal_base_url": "http://127.0.0.1:8008/", "jevlocal_api_key": "k"}
+    q = api_questions(validate_plan(PLAN))
+    q.update(_many_questions(7))
+    ans = make_judge("jev-local", s).judge("data:image/jpeg;base64,AA", q)
+    assert set(ans) == set(q)
+    assert calls == [("http://127.0.0.1:8008/v1/decisions", "Bearer k")] * 2
+
+
+def test_planner_language_for_jevlocal(monkeypatch):
+    seen = {}
+
+    def fake_chat(key, model, system, user, img, timeout):
+        seen["system"] = system
+        return PLAN
+
+    monkeypatch.setattr(planner, "chat_json", fake_chat)
+    s = {**store.load_settings(), "openrouter_api_key": "k"}
+    assert planner.question_language("jev-local") == "en"
+    plan, note = planner.make_plan(s, "散らかったら", None, "en")
+    assert "英語で書く" in seen["system"] and "英語" in note
+    fb = fallback_plan("在庫あり", "en")
+    assert fb["questions"]["main"]["instructions"].startswith("Does the image")

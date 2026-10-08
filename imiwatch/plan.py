@@ -127,8 +127,8 @@ def normalize_answers(plan: dict, answers: dict) -> dict[str, float]:
     values: dict[str, float] = {}
     for qid, q in plan["questions"].items():
         a = answers.get(qid)
-        if not isinstance(a, dict):
-            continue
+        if not isinstance(a, dict) or a.get("abstained"):
+            continue  # 答えがない・判断保留の問いは指標に使わない
         t = q["type"]
         try:
             if t == "noul":
@@ -222,8 +222,10 @@ def describe_plan(plan: dict) -> str:
     return "\n".join(lines)
 
 
-def fallback_plan(request: str) -> dict:
+def fallback_plan(request: str, language: str = "ja") -> dict:
     """設計役の LLM が使えないときの、最小の設計図。"""
+    instr = (f"Does the image satisfy this condition? {request}" if language == "en"
+             else f"画像の状態は次の条件を満たしているか: {request}")
     return validate_plan(
         {
             "title": request[:30] or "見張り",
@@ -231,7 +233,7 @@ def fallback_plan(request: str) -> dict:
             "questions": {
                 "main": {
                     "type": "noul",
-                    "instructions": f"画像の状態は次の条件を満たしているか: {request}",
+                    "instructions": instr,
                 }
             },
             "metric": {"name": "条件の成立度", "weights": {"main": 1.0}},

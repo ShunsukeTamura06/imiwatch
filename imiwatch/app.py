@@ -278,13 +278,15 @@ class App(tk.Tk):
                     self.latest_text.insert("end", f"  {k}: {v:.2f}\n")
             return
         self.latest_text.insert("end", f"{r.timestamp}（{r.status}）\n")
-        if r.error:
+        if r.status == "error":
             self.latest_text.insert("end", f"エラー: {r.error}\n")
             return
         self.latest_text.insert("end", f"{m.plan['metric']['name']}: {_fmt_metric(r.metric)}\n")
         for qid, q in m.plan["questions"].items():
             a = r.answers.get(qid, {})
-            if q["type"] == "noul":
+            if a.get("abstained"):
+                txt = f"判断保留（不明 {a.get('unknown', 0):.2f}）"
+            elif q["type"] == "noul":
                 txt = f"{a.get('noul', 0):.2f}"
             elif q["type"] == "score":
                 txt = f"{a.get('score', 0):.2f} / {len(q['criteria']) - 1}"
@@ -601,9 +603,10 @@ class NewMonitorDialog(tk.Toplevel):
         self.plan_note.config(text="設計中…（数秒〜数十秒）")
         img = self._current_image_url()
         settings = dict(self.app.settings)
+        language = planner.question_language(self._provider() or settings.get("default_provider", ""))
 
         def work():
-            plan, note = planner.make_plan(settings, req, img)
+            plan, note = planner.make_plan(settings, req, img, language)
             self.app.call_soon(lambda: self._set_plan(plan, note))
 
         threading.Thread(target=work, daemon=True).start()
@@ -701,6 +704,9 @@ class SettingsDialog(tk.Toplevel):
         ("Perplexity", None, None),
         ("APIキー", "perplexity_api_key", True),
         ("モデル", "perplexity_model", False),
+        ("jev-local（imajev-4b・自前サーバー）", None, None),
+        ("サーバーURL", "jevlocal_base_url", False),
+        ("APIキー（KEV_API_KEY・未設定なら空欄）", "jevlocal_api_key", True),
         ("SystemOne 互換（Jev など）", None, None),
         ("エンドポイントURL", "systemone_base_url", False),
         ("APIキー", "systemone_api_key", True),

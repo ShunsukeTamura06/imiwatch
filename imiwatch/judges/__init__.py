@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from .base import Judge, JudgeError
 from .clef import ClefJudge
+from .jevlocal import JevLocalJudge
 from .llm import LLMJudge
 from .mock import MockJudge
 from .perplexity import PerplexityJudge
@@ -17,6 +18,7 @@ PROVIDERS = {
     "clef-flash": ("Cloudflare Clef-flash（速い・画像可）", lambda s: ClefJudge(s, "clef-flash")),
     "clef": ("Cloudflare Clef（精度重視・画像可）", lambda s: ClefJudge(s, "clef")),
     "perplexity": ("Perplexity Decisions API（画像可）", lambda s: PerplexityJudge(s)),
+    "jev-local": ("jev-local・imajev-4b（自前サーバー・オープンウェイト・画像可）", lambda s: JevLocalJudge(s)),
     "systemone": ("SystemOne 互換（TypeSafe Jev など）", lambda s: SystemOneJudge(s)),
     "llm": ("LLM で代用（OpenRouter・遅い・確率は非較正）", lambda s: LLMJudge(s)),
     "mock": ("モック（APIを使わない動作確認用）", lambda s: MockJudge(s)),

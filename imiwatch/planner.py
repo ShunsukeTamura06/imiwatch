@@ -42,28 +42,45 @@ SYSTEM = r"""あなたは「判定モデル（decision model）」の問いを�
 - 記録だけしたい問いは weights に入れなくてよい
 - 通知が不要な「測るだけ」の依頼でも notify は書き、閾値は高め（0.8 前後）にする
 - 取得間隔は、変化の速さに合わせる（ゆっくり変わるものは 300〜1800 秒、速いものは 30〜120 秒）
-- 日本語で書く（問いID だけは英数字）"""
+- {language_rule}"""
+
+LANGUAGE_RULES = {
+    "ja": "日本語で書く（問いID だけは英数字）",
+    # imajev など英語中心で学習された判定モデル向け。人が読む title / summary / message / caveats は日本語のまま
+    "en": "questions の instructions と criteria（選択肢・段階の説明）は英語で書く。"
+          "title・summary・metric.name・notify.message・caveats は日本語で書く。問いID は英数字",
+}
 
 
-def make_plan(settings: dict, request: str, image_data_url: str | None = None) -> tuple[dict, str]:
+def question_language(provider: str) -> str:
+    """判定モデルに合わせた、問いを書く言語。"""
+    return "en" if provider == "jev-local" else "ja"
+
+
+def make_plan(
+    settings: dict, request: str, image_data_url: str | None = None, language: str = "ja"
+) -> tuple[dict, str]:
     """設計図と、どう作ったかのメモを返す。LLM が使えなければ簡易設計に切り替える。"""
+    system = SYSTEM.replace("{language_rule}", LANGUAGE_RULES.get(language, LANGUAGE_RULES["ja"]))
     key = settings.get("openrouter_api_key", "")
     if not key:
-        return fallback_plan(request), "OpenRouter のキーがないため、簡易設計を使いました。"
+        return fallback_plan(request, language), "OpenRouter のキーがないため、簡易設計を使いました。"
     model = settings.get("planner_model") or "openrouter/auto"
     user = f"ユーザーの依頼: {request}\n\n添付画像は、ユーザーが選んだ画面範囲の現在の様子です（あれば）。"
     last_err = None
     # 画像付き → 画像なし の順に試す（画像を読めないモデルもあるため）
     for img in ([image_data_url, None] if image_data_url else [None]):
         try:
-            raw = chat_json(key, model, SYSTEM, user, img, timeout=float(settings.get("request_timeout", 60)) + 30)
+            raw = chat_json(key, model, system, user, img, timeout=float(settings.get("request_timeout", 60)) + 30)
             plan = validate_plan(raw)
             note = f"{model} で設計しました" + ("（画面の画像も参考にしました）" if img else "")
+            if language == "en":
+                note += "。判定モデルに合わせて、問いは英語で書いています"
             return plan, note
         except (LLMError, PlanError, TypeError, ValueError) as e:
             last_err = e
             continue
-    return fallback_plan(request), f"LLM による設計に失敗したため簡易設計を使いました: {last_err}"
+    return fallback_plan(request, language), f"LLM による設計に失敗したため簡易設計を使いました: {last_err}"
 
 
 def plan_to_json(plan: dict) -> str:

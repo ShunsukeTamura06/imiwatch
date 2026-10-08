@@ -62,12 +62,51 @@ py -3 -m venv .venv
 | Cloudflare **Clef-flash** | ○ | アカウントID・APIトークン | 速い。最初に試すならこれ |
 | Cloudflare **Clef** | ○ | 同上 | 27B。精度重視 |
 | **Perplexity** Decisions API | ○ | APIキー | `pplx-decider-v1.1-27b` など |
+| **jev-local（imajev-4b）** | ○ | サーバーURL（・APIキー） | オープンウェイトを自前の GPU サーバーで動かす。画像は外部 API に送られない。下記参照 |
 | **SystemOne 互換**（TypeSafe Jev など） | △ | URL・APIキー・モデル | Jev は画像を読めません。画像対応のエンドポイントなら「画像の送り方」を clef / perplexity に |
 | **LLM で代用**（OpenRouter） | ○ | OpenRouter キー | 判定モデルがなくても試せる代用品。遅く、確率は較正されていません |
 | **モック** | ○ | なし | API を呼ばない動作確認用 |
 
 - Cloudflare の API トークンは「Workers AI」の権限で作成します
-- キーは環境変数でも渡せます：`CLOUDFLARE_ACCOUNT_ID` `CLOUDFLARE_API_TOKEN` `PERPLEXITY_API_KEY` `TYPESAFE_API_KEY` `OPENROUTER_API_KEY`
+- キーは環境変数でも渡せます：`CLOUDFLARE_ACCOUNT_ID` `CLOUDFLARE_API_TOKEN` `PERPLEXITY_API_KEY` `TYPESAFE_API_KEY` `OPENROUTER_API_KEY` `KEV_API_KEY`（jev-local）
+
+### jev-local（オープンウェイトの imajev-4b）を使う
+
+[jev-local](https://github.com/ShunsukeTamura06/jev-local) の画像対応版（`feat/imajev-vision`）を EC2 などの GPU サーバーで起動し、
+その `POST /v1/decisions` に接続します。
+
+1. GPU サーバー側（jev-local の README どおり）
+
+   ```bash
+   git clone -b feat/imajev-vision https://github.com/ShunsukeTamura06/jev-local.git
+   cd jev-local
+   python3.12 -m venv .venv && .venv/bin/python -m pip install --upgrade pip
+   ./scripts/install_vision_model.sh
+   ./scripts/start.sh            # 127.0.0.1:8008 で待ち受け
+   ```
+
+2. Windows 側で SSH トンネルを張る（サーバーを外部に公開しないため）
+
+   ```bat
+   ssh -N -L 8008:127.0.0.1:8008 ec2-user@<EC2のアドレス>
+   ```
+
+3. imiwatch の設定で「jev-local」のサーバーURLを `http://127.0.0.1:8008`（既定値）にする。
+   サーバーで `KEV_API_KEY` を設定した場合は、同じ値を APIキー欄に入れる
+
+imiwatch 側の対応:
+
+| imiwatch の問い | imajev のフィールド | 備考 |
+|---|---|---|
+| noul | boolean | `criteria.true/false` → `yes_description` / `no_description` |
+| choice | choice | 選択肢 → `options` |
+| score | ordinal | 段階 → `levels`（0, 1, 2 …）。グラフ用に段階の期待値を使う |
+
+- imajev は **判断保留（abstained）** を返すことがあります。保留した問いは指標の計算から外し、ログに `判断保留: <問い>` と残します
+- 「不明」の確率は「はい」に混ぜません（jev-local の推奨どおり、再正規化しない）
+- 1リクエスト8項目までなので、それを超える問いは分割して送ります
+- imajev は英語中心で学習されているため、判定モデルに jev-local を選んで設計すると、**問いは英語**で作られます（名前や通知文は日本語のまま）
+- 旧版（main ブランチの Kev-4B）は画像を読めません。画像の判定には imajev 版を使ってください
 
 新しい判定モデルを足すには、`imiwatch/judges/` に `Judge` を継承したクラスを作り、
 `imiwatch/judges/__init__.py` の `PROVIDERS` に登録します。
@@ -103,6 +142,7 @@ py -3 -m venv .venv
 - **画面に見えている範囲しか撮れません**。ウィンドウが隠れる・最小化・スリープ・画面ロック中は正しく判定できません
 - 範囲は画面上の座標で記録するため、ウィンドウを動かすと見張る対象がずれます
 - **選んだ範囲の画像は、選んだ判定モデルの提供元（と、設計時は OpenRouter）に送信されます**。
+  jev-local を使えば、判定の画像は自分のサーバーの外に出ません（設計時の OpenRouter は別。キーを入れなければ簡易設計になります）。
   個人情報や業務上の機密が映る範囲は選ばないでください
 - 判定モデルは数を数える・計算する・細かい文字を読むのが苦手です。設計役の LLM はそうした依頼を見た目で判断できる問いに言い換えます
 - 通知は Windows のトースト通知（`winotify`）を使い、使えない場合は画面右下に簡易表示します
