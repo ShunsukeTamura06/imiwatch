@@ -264,18 +264,34 @@
 
       <section data-sec="llm" hidden>
         <h3>設計役の LLM</h3>
-        <p class="hint">知りたいことを観点に分けるときと、「LLM で代用」の判定に使います。OpenAI 互換の API（Chat Completions）なら何でも使えます。</p>
+        <p class="hint">知りたいことを観点に分けるときと、「LLM で代用」の判定に使います。OpenAI 互換（/chat/completions）と Anthropic 形式（/v1/messages）のどちらにも対応しています。</p>
         <label class="field"><span>接続先</span>
           <select id="s-llm-preset">
-            <option value="https://openrouter.ai/api/v1">OpenRouter</option>
-            <option value="https://api.openai.com/v1">OpenAI</option>
-            <option value="http://localhost:1234/v1">LM Studio（このPC）</option>
-            <option value="http://localhost:11434/v1">Ollama（このPC）</option>
-            <option value="custom">その他（URL を入力）</option>
+            <option value="openai|https://openrouter.ai/api/v1">OpenRouter</option>
+            <option value="openai|https://api.openai.com/v1">OpenAI</option>
+            <option value="anthropic|https://api.anthropic.com">Anthropic</option>
+            <option value="openai|http://localhost:1234/v1">LM Studio（このPC）</option>
+            <option value="openai|http://localhost:11434/v1">Ollama（このPC）</option>
+            <option value="custom">その他（社内の API など。URL と形式を指定）</option>
+          </select>
+        </label>
+        <label class="field"><span>形式</span>
+          <select name="llm_api_format" id="s-llm-format">
+            <option value="openai">OpenAI 互換（POST …/chat/completions）</option>
+            <option value="anthropic">Anthropic 形式（POST …/v1/messages）</option>
           </select>
         </label>
         <label class="field"><span>Base URL</span><input name="llm_base_url" placeholder="https://…/v1"></label>
+        <p class="hint" id="s-llm-endpoint"></p>
         <label class="field"><span>APIキー</span><input name="llm_api_key" type="password" data-secret placeholder="ローカルのサーバーなら空欄で構いません"></label>
+        <label class="field"><span>キーの送り方</span>
+          <select name="llm_auth_header">
+            <option value="auto">形式に合わせる（OpenAI 互換は Authorization: Bearer、Anthropic 形式は x-api-key）</option>
+            <option value="bearer">Authorization: Bearer</option>
+            <option value="x-api-key">x-api-key</option>
+            <option value="both">両方送る</option>
+          </select>
+        </label>
         <label class="field"><span>設計に使うモデル</span><input name="planner_model" placeholder="例: gpt-5.6-luna / qwen3.5-9b"></label>
         <label class="field"><span>代用判定に使うモデル</span><input name="llm_judge_model" placeholder="画像を読めるモデル"></label>
         <div class="row"><button type="button" class="btn small" id="s-test-llm">接続テスト</button><span class="test-out" id="s-test-llm-out"></span></div>

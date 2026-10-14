@@ -32,6 +32,21 @@ def _enable_dpi_awareness() -> None:
             pass
 
 
+def use_system_certificates() -> bool:
+    """HTTPS の証明書確認に、OS の証明書ストアを使う。
+
+    社内のプロキシや社内 API が社内の認証局の証明書を使っていても、
+    Windows に登録済みなら「certificate verify failed」にならない。
+    """
+    try:
+        import truststore
+
+        truststore.inject_into_ssl()
+        return True
+    except Exception:  # noqa: BLE001 - 入っていなければ、これまでどおり certifi を使う
+        return False
+
+
 def run_window(api: Api, debug: bool = False) -> None:
     import webview
 
@@ -74,6 +89,7 @@ def main(argv: list[str] | None = None) -> None:
     args = ap.parse_args(argv)
 
     _enable_dpi_awareness()
+    use_system_certificates()
     api = Api()
     if not args.browser:
         try:

@@ -49,9 +49,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # jev-local（imajev-4b を自前の GPU サーバーで動かす。SSH トンネル越しの 127.0.0.1:8008 を想定）
     "jevlocal_base_url": "http://127.0.0.1:8008",
     "jevlocal_api_key": "",
-    # 設計役の LLM と、LLM による判定の代用（OpenAI 互換の Chat Completions API）
+    # 設計役の LLM と、LLM による判定の代用（OpenAI 互換の Chat Completions か、Anthropic 形式の Messages）
     # OpenRouter・OpenAI・Azure 以外の互換サーバー・LM Studio・Ollama・vLLM などを base URL で指定する
     "llm_base_url": "https://openrouter.ai/api/v1",
+    "llm_api_format": "openai",   # openai（/chat/completions）か anthropic（/v1/messages）
+    "llm_auth_header": "auto",    # auto / bearer / x-api-key / both
     "llm_api_key": "",
     "planner_model": "openrouter/auto",
     "llm_judge_model": "openrouter/auto",

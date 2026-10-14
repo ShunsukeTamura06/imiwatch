@@ -973,10 +973,20 @@ async function openSettings() {
   $$(".test-out").forEach((x) => { x.textContent = ""; x.className = "test-out"; });
   $("#dlg-settings").showModal();
 }
+function llmEndpoint(base, fmt) {
+  let u = (base || "").trim().replace(/\/+$/, "");
+  if (!u) return "";
+  if (fmt === "anthropic") return u.endsWith("/messages") ? u : u.endsWith("/v1") ? `${u}/messages` : `${u}/v1/messages`;
+  return u.endsWith("/chat/completions") ? u : `${u}/chat/completions`;
+}
 function syncPreset() {
   const url = $("[name=llm_base_url]").value.trim();
+  const fmt = $("#s-llm-format").value;
+  const key = `${fmt}|${url}`;
   const opts = $$("#s-llm-preset option").map((o) => o.value);
-  $("#s-llm-preset").value = opts.includes(url) ? url : "custom";
+  $("#s-llm-preset").value = opts.includes(key) ? key : "custom";
+  const ep = llmEndpoint(url, fmt);
+  $("#s-llm-endpoint").textContent = ep ? `送り先: ${ep}` : "";
 }
 function collectSettings() {
   const patch = {};
@@ -1001,8 +1011,11 @@ function bindSettings() {
   }));
   $("#s-llm-preset").onchange = (e) => {
     if (e.target.value !== "custom") {
-      $("[name=llm_base_url]").value = e.target.value;
-      const isOR = e.target.value.includes("openrouter");
+      const [fmt, url] = e.target.value.split("|");
+      $("[name=llm_base_url]").value = url;
+      $("#s-llm-format").value = fmt;
+      syncPreset();
+      const isOR = url.includes("openrouter");
       for (const k of ["planner_model", "llm_judge_model"]) {
         const el = $(`[name=${k}]`);
         if (isOR && !el.value) el.value = "openrouter/auto";
@@ -1012,6 +1025,7 @@ function bindSettings() {
     else $("[name=llm_base_url]").focus();
   };
   $("[name=llm_base_url]").addEventListener("input", syncPreset);
+  $("#s-llm-format").addEventListener("change", syncPreset);
   $("#s-cancel").onclick = () => $("#dlg-settings").close();
   $("#s-save").onclick = (e) => busy(e.currentTarget, async () => { await saveSettings(); $("#dlg-settings").close(); if (S.selected) renderHeader(); });
   $$("[data-test]").forEach((b) => (b.onclick = (e) => busy(e.currentTarget, async () => {

@@ -448,6 +448,10 @@ class Api:
                 v = max(0.0, float(v))
             elif k == "default_provider" and v not in PROVIDERS:
                 raise ValueError(f"不明な判定モデルです: {v}")
+            elif k == "llm_api_format" and v not in ("openai", "anthropic"):
+                raise ValueError(f"LLM の形式は openai か anthropic です: {v}")
+            elif k == "llm_auth_header" and v not in ("auto", "bearer", "x-api-key", "both"):
+                raise ValueError(f"認証ヘッダーの指定が正しくありません: {v}")
             else:
                 v = str(v).strip() if isinstance(v, str) else v
             clean[k] = v

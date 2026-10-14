@@ -23,8 +23,8 @@
 - Python 3.10〜3.13（[python.org](https://www.python.org/downloads/windows/) の公式インストーラ推奨。範囲選択に使う tkinter が含まれます）
 - Microsoft Edge WebView2 ランタイム（Windows 10 / 11 には通常入っています。画面の表示に使います）
 - 判定モデルの API キー（下の表のどれか1つ）。試すだけなら「モック」でキーなしでも動きます
-- （推奨）設計役の LLM：知りたいことを観点に分けるのに使います。**OpenAI 互換の API なら何でも**使えます
-  （OpenRouter、OpenAI、LM Studio、Ollama、vLLM など）。ない場合は、依頼文をそのまま1つの問いにする簡易設計になります
+- （推奨）設計役の LLM：知りたいことを観点に分けるのに使います。**OpenAI 互換（/chat/completions）か Anthropic 形式（/v1/messages）**の API なら使えます
+  （OpenRouter、OpenAI、Anthropic、社内の LLM ゲートウェイ、LM Studio、Ollama、vLLM など）。ない場合は、依頼文をそのまま1つの問いにする簡易設計になります
 
 ## 起動
 
@@ -99,18 +99,21 @@ py -3 -m venv .venv
 - Cloudflare の API トークンは「Workers AI」の権限で作成します
 - キーは環境変数でも渡せます：`CLOUDFLARE_ACCOUNT_ID` `CLOUDFLARE_API_TOKEN` `PERPLEXITY_API_KEY` `TYPESAFE_API_KEY` `KEV_API_KEY`（jev-local）、設計役の LLM は `LLM_API_KEY`（なければ `OPENROUTER_API_KEY`）
 
-### 設計役の LLM（OpenAI 互換）
+### 設計役の LLM（OpenAI 互換 / Anthropic 形式）
 
-設定の「設計役の LLM」で、接続先を選ぶか Base URL を入力します。`{Base URL}/chat/completions` に送ります。
+設定の「設計役の LLM」で、接続先を選ぶか、「その他」を選んで形式と Base URL を入力します。設定画面に実際の送り先が表示されます。
 
-| 接続先 | Base URL | APIキー | モデルの例 |
-|---|---|---|---|
-| OpenRouter | `https://openrouter.ai/api/v1` | 必要 | `openrouter/auto` |
-| OpenAI | `https://api.openai.com/v1` | 必要 | 画像を読めるモデル |
-| LM Studio（このPC） | `http://localhost:1234/v1` | 不要 | 読み込んだモデルの名前 |
-| Ollama（このPC） | `http://localhost:11434/v1` | 不要 | `qwen3.5:9b` など |
+| 接続先 | 形式 | Base URL | 送り先 | APIキー |
+|---|---|---|---|---|
+| OpenRouter | OpenAI 互換 | `https://openrouter.ai/api/v1` | `…/chat/completions` | 必要 |
+| OpenAI | OpenAI 互換 | `https://api.openai.com/v1` | `…/chat/completions` | 必要 |
+| Anthropic | Anthropic 形式 | `https://api.anthropic.com` | `…/v1/messages` | 必要 |
+| 社内の LLM ゲートウェイなど | どちらか | ゲートウェイの URL | 形式に合わせて自動 | ゲートウェイによる |
+| LM Studio / Ollama（このPC） | OpenAI 互換 | `http://localhost:1234/v1` / `http://localhost:11434/v1` | `…/chat/completions` | 不要 |
 
-- JSON モード（`response_format`）に対応していないサーバーでは、自動で外して送り直します
+- Anthropic 形式では `x-api-key` と `anthropic-version: 2023-06-01` を付けて送ります。ゲートウェイが `Authorization: Bearer` を求める場合は「キーの送り方」で変えられます
+- Base URL は `…/v1` まで書いても、`…/v1/messages` まで書いても構いません
+- JSON モード（`response_format`）に対応していない OpenAI 互換サーバーでは、自動で外して送り直します
 - 画像を読めないモデルでは、画像なしで設計します
 - v0.1 の「OpenRouter の API キー」は、そのまま新しい設定に引き継がれます
 
@@ -184,6 +187,14 @@ imiwatch 側の対応:
 - `monitors\<id>\latest.jpg`、`notified_*.jpg`：最新の画像と、通知したときの画像
 - `monitors\<id>\shots\*.jpg`：グラフで振り返るための、判定ごとの縮小画像（見張りごとに既定 3,000 枚まで。設定で変更可）
 - `webview\`：画面の表示設定（選んだ見張り・期間など）
+
+## プロキシ・社内ネットワークで使う
+
+- **証明書**：HTTPS の確認に Windows の証明書ストアを使います（`truststore`）。社内の認証局の証明書を使うプロキシや社内 API でも、Windows に登録されていれば「certificate verify failed」になりません
+- **プロキシ**：Windows のプロキシ設定（または環境変数 `HTTPS_PROXY`）に従います。自動構成スクリプト（PAC）だけで設定されている環境では読めないので、`HTTPS_PROXY` を設定してください
+- `HTTPS_PROXY` を設定した場合は、jev-local や社内 API がプロキシを通らないよう `NO_PROXY=127.0.0.1,localhost,<社内APIのホスト>` も設定してください
+- jev-local の SSH トンネルで 22 番ポートが使えない場合は、HTTPS で通る AWS の SSM ポートフォワーディングでもトンネルを張れます
+- 画面の表示に外部のファイル（CDN・Web フォント）は使いません。外につながるのは、選んだ判定モデルと設計役の LLM だけです
 
 ## 制約と注意
 

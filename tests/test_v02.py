@@ -276,3 +276,87 @@ def test_server_requires_token(api):
             urllib.request.urlopen(base + "/../imiwatch/api.py")
     finally:
         httpd.shutdown()
+
+
+# ------------------------------------------------------------------ Anthropic 形式（/v1/messages）
+def test_anthropic_endpoint_and_headers():
+    assert llm_client.endpoint("https://llm.example.local", "anthropic") == "https://llm.example.local/v1/messages"
+    assert llm_client.endpoint("https://llm.example.local/v1/", "anthropic") == "https://llm.example.local/v1/messages"
+    assert llm_client.endpoint("https://gw/api/v1/messages", "anthropic") == "https://gw/api/v1/messages"
+    s = {"llm_api_format": "anthropic", "llm_auth_header": "auto"}
+    assert llm_client.auth_headers(s, "k") == {"x-api-key": "k"}
+    assert llm_client.auth_headers({**s, "llm_auth_header": "bearer"}, "k") == {"Authorization": "Bearer k"}
+    assert llm_client.auth_headers({**s, "llm_auth_header": "both"}, "k") == {"x-api-key": "k", "Authorization": "Bearer k"}
+    assert llm_client.auth_headers({"llm_api_format": "openai"}, "k") == {"Authorization": "Bearer k"}
+    assert llm_client.auth_headers(s, "") == {}
+
+
+def test_anthropic_request_shape():
+    s = {"llm_api_format": "anthropic", "llm_base_url": "https://gw.internal", "llm_api_key": "k", "planner_model": "claude-x"}
+    url, headers, payload = llm_client.build_request(s, "SYS", "USER", "data:image/png;base64,QUJD", "claude-x")
+    assert url == "https://gw.internal/v1/messages"
+    assert headers["anthropic-version"] == "2023-06-01" and headers["x-api-key"] == "k"
+    assert payload["system"] == "SYS" and payload["max_tokens"] > 0 and payload["model"] == "claude-x"
+    assert "temperature" not in payload and "response_format" not in payload
+    content = payload["messages"][0]["content"]
+    assert content[0] == {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "QUJD"}}
+    assert content[1] == {"type": "text", "text": "USER"}
+    assert [m["role"] for m in payload["messages"]] == ["user"]  # system は messages に入れない
+
+
+def test_anthropic_design_over_http():
+    """社内ゲートウェイを模したサーバーに、実際の HTTP で設計と提案を依頼する。"""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    seen = []
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            seen.append({"path": self.path, "key": self.headers.get("x-api-key"),
+                         "ver": self.headers.get("anthropic-version"), "body": body})
+            if "1つだけ" in body["system"]:
+                reply = {"id": "badge", "question": {"type": "score", "instructions": "バッジの目立ち方",
+                                                     "criteria": ["ない", "小さい", "大きく赤い"]}, "weight": 1}
+            else:
+                reply = PLAN
+            text = "設計しました。\n```json\n" + json.dumps(reply, ensure_ascii=False) + "\n```"
+            out = json.dumps({"id": "msg_1", "type": "message", "role": "assistant",
+                              "content": [{"type": "text", "text": text}], "stop_reason": "end_turn"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        s = {**store.load_settings(), "llm_api_format": "anthropic",
+             "llm_base_url": f"http://127.0.0.1:{srv.server_address[1]}", "llm_api_key": "secret",
+             "planner_model": "internal-claude"}
+        plan, note = planner.make_plan(s, "在庫ありになったら", "data:image/jpeg;base64,QUJD")
+        assert plan["metric"]["name"] == "在庫ありらしさ" and "internal-claude" in note
+        sug = planner.suggest_question(s, "在庫ありになったら", "score", plan["questions"])
+        assert sug["question"]["type"] == "score" and sug["id"] == "badge"
+        assert seen[0]["path"] == "/v1/messages" and seen[0]["key"] == "secret" and seen[0]["ver"] == "2023-06-01"
+        assert seen[0]["body"]["messages"][0]["content"][0]["type"] == "image"
+    finally:
+        srv.shutdown()
+
+
+def test_anthropic_bad_reply_mentions_format(monkeypatch):
+    monkeypatch.setattr(llm_client.requests, "post", lambda url, headers, json, timeout: chat_reply({"x": 1}))
+    s = {"llm_api_format": "anthropic", "llm_base_url": "https://gw", "llm_api_key": "k", "planner_model": "m"}
+    with pytest.raises(llm_client.LLMError, match="形式"):
+        llm_client.chat_json(s, "s", "u")  # OpenAI 形式の応答が返ってきた → 形式の設定を見直すよう案内
+
+
+def test_api_rejects_bad_llm_format(api):
+    assert api.save_settings({"llm_api_format": "gemini"})["ok"] is False
+    assert api.save_settings({"llm_api_format": "anthropic", "llm_auth_header": "x-api-key"})["ok"]
+    assert store.load_settings()["llm_api_format"] == "anthropic"
