@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import json
+import re
 
-from .llm_client import LLMError, chat_json
+from .llm_client import LLMError, chat_json, is_configured, llm_config
 from .plan import PlanError, fallback_plan, validate_plan
 
 SYSTEM = r"""あなたは「判定モデル（decision model）」の問いを設計する専門家です。
@@ -57,21 +58,51 @@ def question_language(provider: str) -> str:
     return "en" if provider == "jev-local" else "ja"
 
 
+TYPE_RULES = {
+    "noul": "type は noul（はい/いいえ）。instructions は「はい」が高い値になる向きの問いにする。"
+            "criteria は {\"true\": \"はいに当たる見た目\", \"false\": \"いいえに当たる見た目\"}",
+    "choice": "type は choice（選択肢から1つ）。criteria は {\"選択肢ID（英数字）\": \"説明\"} で 3〜6 個、"
+              "当てはまらない場合の \"other\" を必ず入れる。指標として測りたい選択肢IDを target に入れる",
+    "score": "type は score（段階評価）。criteria は低い順の配列で 3〜5 段階。"
+             "各段階は「程度」ではなく「目に見える状況」で書く",
+}
+
+SUGGEST_SYSTEM = r"""あなたは「判定モデル（decision model）」の問いを設計する専門家です。
+判定モデルは文章を生成せず、画像と問いを受け取り、あらかじめ決めた選択肢ごとの確率だけを返します。
+ユーザーの依頼と、すでにある問いの一覧を見て、指定された型の問いを「1つだけ」新しく作ります。
+すでにある問いと同じ観点は避け、依頼の判定に役立つ別の観点を選んでください。
+判定モデルは、数を数える・計算・日付の比較・細かい文字が苦手です。1問1判断にしてください。
+
+# 型の指定
+{type_rule}
+
+# 出力形式（JSON のみ）
+{"id": "英数字の短いID", "question": {"type": "...", "instructions": "...", "criteria": ..., "target": "（choiceのみ）"},
+ "weight": 指標に使う重み（0〜2。記録だけなら 0）, "reason": "この観点を選んだ理由（日本語で1文）"}
+
+# 言語
+{language_rule}"""
+
+
+def _timeout(settings: dict) -> float:
+    return float(settings.get("request_timeout", 60)) + 30
+
+
 def make_plan(
     settings: dict, request: str, image_data_url: str | None = None, language: str = "ja"
 ) -> tuple[dict, str]:
     """設計図と、どう作ったかのメモを返す。LLM が使えなければ簡易設計に切り替える。"""
     system = SYSTEM.replace("{language_rule}", LANGUAGE_RULES.get(language, LANGUAGE_RULES["ja"]))
-    key = settings.get("openrouter_api_key", "")
-    if not key:
-        return fallback_plan(request, language), "OpenRouter のキーがないため、簡易設計を使いました。"
-    model = settings.get("planner_model") or "openrouter/auto"
+    ok, why = is_configured(settings)
+    if not ok:
+        return fallback_plan(request, language), f"{why}。簡易設計を使いました（設定で設計役 LLM を指定できます）"
+    _, _, model = llm_config(settings)
     user = f"ユーザーの依頼: {request}\n\n添付画像は、ユーザーが選んだ画面範囲の現在の様子です（あれば）。"
     last_err = None
     # 画像付き → 画像なし の順に試す（画像を読めないモデルもあるため）
     for img in ([image_data_url, None] if image_data_url else [None]):
         try:
-            raw = chat_json(key, model, system, user, img, timeout=float(settings.get("request_timeout", 60)) + 30)
+            raw = chat_json(settings, system, user, img, timeout=_timeout(settings))
             plan = validate_plan(raw)
             note = f"{model} で設計しました" + ("（画面の画像も参考にしました）" if img else "")
             if language == "en":
@@ -81,6 +112,57 @@ def make_plan(
             last_err = e
             continue
     return fallback_plan(request, language), f"LLM による設計に失敗したため簡易設計を使いました: {last_err}"
+
+
+def suggest_question(
+    settings: dict,
+    request: str,
+    qtype: str,
+    existing: dict | None = None,
+    image_data_url: str | None = None,
+    language: str = "ja",
+) -> dict:
+    """指定した型の問いを1つ提案する。{"id", "question", "weight", "reason"} を返す。"""
+    if qtype not in TYPE_RULES:
+        raise PlanError(f"型は noul / choice / score のいずれかです: {qtype}")
+    ok, why = is_configured(settings)
+    if not ok:
+        raise LLMError(why)
+    system = (SUGGEST_SYSTEM.replace("{type_rule}", TYPE_RULES[qtype])
+              .replace("{language_rule}", LANGUAGE_RULES.get(language, LANGUAGE_RULES["ja"])))
+    existing = existing or {}
+    user = (f"ユーザーの依頼: {request or '（未記入）'}\n\nすでにある問い:\n"
+            + (json.dumps(existing, ensure_ascii=False, indent=1) if existing else "（まだありません）"))
+    last_err: Exception | None = None
+    for img in ([image_data_url, None] if image_data_url else [None]):
+        try:
+            raw = chat_json(settings, system, user, img, timeout=_timeout(settings))
+            q = dict(raw.get("question") or {})
+            q["type"] = qtype  # 型は必ず指定どおりにする
+            qid = _unique_id(str(raw.get("id") or qtype), existing)
+            # 1問だけの設計図として検証し、足りない項目を補う
+            checked = validate_plan({"questions": {qid: q}, "metric": {"weights": {qid: 1}}})
+            weight = raw.get("weight", 1)
+            try:
+                weight = max(0.0, float(weight))
+            except (TypeError, ValueError):
+                weight = 1.0
+            return {"id": qid, "question": checked["questions"][qid], "weight": weight,
+                    "reason": str(raw.get("reason") or "")}
+        except (LLMError, PlanError, TypeError, ValueError, AttributeError) as e:
+            last_err = e
+            continue
+    raise LLMError(f"問いの提案に失敗しました: {last_err}")
+
+
+def _unique_id(base: str, existing: dict) -> str:
+    base = re.sub(r"[^A-Za-z0-9_]", "_", base).strip("_")[:40] or "q"
+    if not base[0].isalpha():
+        base = "q_" + base
+    qid, n = base, 2
+    while qid in existing:
+        qid, n = f"{base}_{n}", n + 1
+    return qid
 
 
 def plan_to_json(plan: dict) -> str:

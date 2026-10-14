@@ -28,6 +28,7 @@ class Result:
     notified: bool = False
     error: str = ""
     image: Image.Image | None = None
+    shot: str = ""  # 保存した縮小画像のファイル名
 
 
 class MonitorRuntime:
@@ -39,14 +40,24 @@ class MonitorRuntime:
         self.last_result: Result | None = None
         self.notify_state = NotifyState()
         self._lock = threading.Lock()
+        self.last_shot = ""
+        self._saves = 0
+
+    def reset(self) -> None:
+        """設計図や範囲が変わったとき、前回の値・差分・通知の状態を捨てる。"""
+        with self._lock:
+            self.prev_fp = None
+            self.last_result = None
+            self.notify_state = NotifyState()
 
     def run_once(
         self,
         settings: dict,
-        grab_fn: Callable[[dict], Image.Image] = capture.grab,
+        grab_fn: Callable[[dict], Image.Image] | None = None,
         force: bool = False,
         record: bool = True,
     ) -> Result:
+        grab_fn = grab_fn or capture.grab  # 呼ぶたびに引く（差し替えやすくするため）
         # 定期実行と「今すぐ判定」が重ならないようにする
         with self._lock:
             return self._run_once(settings, grab_fn, force, record)
@@ -58,7 +69,7 @@ class MonitorRuntime:
         try:
             img = grab_fn(m.region)
         except Exception as e:  # noqa: BLE001
-            return self._finish(Result(m.id, ts, "error", provider=provider, error=f"撮影に失敗: {e}"), record)
+            return self._finish(Result(m.id, ts, "error", provider=provider, error=f"撮影に失敗: {e}"), record, settings)
 
         small = capture.shrink(img, int(settings.get("max_image_side", 768)))
         fp = capture.fingerprint(small)
@@ -72,7 +83,7 @@ class MonitorRuntime:
                 m.id, ts, "reused", metric=prev.metric, values=dict(prev.values),
                 answers=prev.answers, provider=provider, image=small,
             )
-            return self._finish(r, record)
+            return self._finish(r, record, settings)
 
         try:
             judge = make_judge(provider, settings)
@@ -81,9 +92,9 @@ class MonitorRuntime:
                 api_questions(m.plan),
             )
         except JudgeError as e:
-            return self._finish(Result(m.id, ts, "error", provider=provider, error=str(e), image=small), record)
+            return self._finish(Result(m.id, ts, "error", provider=provider, error=str(e), image=small), record, settings)
         except Exception as e:  # noqa: BLE001
-            return self._finish(Result(m.id, ts, "error", provider=provider, error=f"想定外のエラー: {e}", image=small), record)
+            return self._finish(Result(m.id, ts, "error", provider=provider, error=f"想定外のエラー: {e}", image=small), record, settings)
 
         self.prev_fp = fp
         values = normalize_answers(m.plan, answers)
@@ -95,18 +106,19 @@ class MonitorRuntime:
         # 通知は実際に判定したときだけ数える（使い回しの値で連続回数を稼がない）
         if record:
             r.notified = self.notify_state.update(m.plan, metric)
-        return self._finish(r, record)
+        return self._finish(r, record, settings)
 
-    def _finish(self, r: Result, record: bool) -> Result:
+    def _finish(self, r: Result, record: bool, settings: dict | None = None) -> Result:
         if r.status != "error":
             self.last_result = r
         if record:
+            self._save_shot(r, settings or {})
             store.append_log(r.monitor_id, {
                 "timestamp": r.timestamp, "status": r.status,
                 "metric": "" if r.metric is None else f"{r.metric:.4f}",
                 "values": {k: round(v, 4) for k, v in r.values.items()},
                 "provider": r.provider, "latency_ms": r.latency_ms,
-                "notified": int(r.notified), "error": r.error,
+                "notified": int(r.notified), "error": r.error, "shot": r.shot,
             })
             if r.image is not None:
                 d = store.monitor_dir(r.monitor_id)
@@ -117,6 +129,24 @@ class MonitorRuntime:
                 except OSError:
                     pass
         return r
+
+    def _save_shot(self, r: Result, settings: dict) -> None:
+        """グラフで振り返るための縮小画像を保存する。変化なし（reused）は前回の画像を指す。"""
+        if r.image is None:
+            return
+        if r.status == "reused" and self.last_shot:
+            r.shot = self.last_shot
+            return
+        name = r.timestamp.replace(":", "").replace("-", "") + ".jpg"
+        try:
+            thumb = capture.shrink(r.image, int(settings.get("shot_side", 480)))
+            thumb.convert("RGB").save(store.shots_dir(r.monitor_id) / name, quality=78)
+        except OSError:
+            return
+        r.shot = self.last_shot = name
+        self._saves += 1
+        if self._saves % 50 == 1:
+            store.prune_shots(r.monitor_id, int(settings.get("max_shots", 3000)))
 
 
 class Scheduler:

@@ -180,14 +180,14 @@ def test_planner_without_key_falls_back():
 def test_planner_uses_llm_and_retries_without_image(monkeypatch):
     calls = []
 
-    def fake_chat(key, model, system, user, img, timeout):
+    def fake_chat(settings, system, user, img=None, timeout=90, model_key="planner_model"):
         calls.append(img)
         if img:
             raise planner.LLMError("this model cannot read images")
         return PLAN
 
     monkeypatch.setattr(planner, "chat_json", fake_chat)
-    s = {**store.load_settings(), "openrouter_api_key": "k"}
+    s = {**store.load_settings(), "llm_api_key": "k"}
     plan, note = planner.make_plan(s, "散らかったら", "data:image/jpeg;base64,AA")
     assert calls == ["data:image/jpeg;base64,AA", None]
     assert plan["title"] == "散らかり度" and "設計しました" in note
@@ -347,12 +347,12 @@ def test_jevlocal_end_to_end(monkeypatch):
 def test_planner_language_for_jevlocal(monkeypatch):
     seen = {}
 
-    def fake_chat(key, model, system, user, img, timeout):
+    def fake_chat(settings, system, user, img=None, timeout=90, model_key="planner_model"):
         seen["system"] = system
         return PLAN
 
     monkeypatch.setattr(planner, "chat_json", fake_chat)
-    s = {**store.load_settings(), "openrouter_api_key": "k"}
+    s = {**store.load_settings(), "llm_api_key": "k"}
     assert planner.question_language("jev-local") == "en"
     plan, note = planner.make_plan(s, "散らかったら", None, "en")
     assert "英語で書く" in seen["system"] and "英語" in note

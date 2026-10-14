@@ -20,7 +20,7 @@ PROVIDERS = {
     "perplexity": ("Perplexity Decisions API（画像可）", lambda s: PerplexityJudge(s)),
     "jev-local": ("jev-local・imajev-4b（自前サーバー・オープンウェイト・画像可）", lambda s: JevLocalJudge(s)),
     "systemone": ("SystemOne 互換（TypeSafe Jev など）", lambda s: SystemOneJudge(s)),
-    "llm": ("LLM で代用（OpenRouter・遅い・確率は非較正）", lambda s: LLMJudge(s)),
+    "llm": ("LLM で代用（OpenAI 互換・遅い・確率は非較正）", lambda s: LLMJudge(s)),
     "mock": ("モック（APIを使わない動作確認用）", lambda s: MockJudge(s)),
 }
 

@@ -17,25 +17,19 @@ SYSTEM = """あなたは画像の判定器です。与えられた問いそれ�
 
 
 class LLMJudge(Judge):
-    """判定モデルの代わりに、画像を読める LLM（OpenRouter 経由）で判定する。
+    """判定モデルの代わりに、画像を読める LLM（OpenAI 互換 API）で判定する。
 
     判定モデルを契約していなくても試せるようにするための代用品。
     遅く、確率は較正されていないので、比較の基準として使う。
     """
 
-    name = "LLM（OpenRouter）"
+    name = "LLM（OpenAI 互換）"
 
     def judge(self, image_data_url, questions, state_text=STATE_TEXT) -> dict:
         user = state_text + "\n\n問い:\n" + json.dumps(questions, ensure_ascii=False, indent=1)
         try:
-            data = chat_json(
-                self.settings.get("openrouter_api_key", ""),
-                self.settings.get("llm_judge_model") or "openrouter/auto",
-                SYSTEM,
-                user,
-                image_data_url,
-                timeout=self.timeout,
-            )
+            data = chat_json(self.settings, SYSTEM, user, image_data_url,
+                             timeout=self.timeout, model_key="llm_judge_model")
         except LLMError as e:
             raise JudgeError(str(e)) from e
         return to_systemone_answers(questions, data)

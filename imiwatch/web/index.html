@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>imiwatch</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="app.css">
+<script src="vendor/echarts/echarts.min.js"></script>
+</head>
+<body>
+<div id="app" class="app">
+
+  <!-- 上の帯 -->
+  <header class="bar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"><i></i></span>
+      <span class="brand-name">imiwatch</span>
+    </div>
+    <div class="bar-actions">
+      <button class="btn ghost" id="btn-settings">設定</button>
+      <button class="btn primary" id="btn-new">新しい見張り</button>
+    </div>
+  </header>
+
+  <div class="body">
+    <!-- 左: 見張りの一覧 -->
+    <aside class="side">
+      <div class="side-head">見張り</div>
+      <ul class="watch-list" id="watch-list"></ul>
+      <p class="side-empty" id="side-empty">まだありません</p>
+    </aside>
+
+    <!-- 右: 画面の切り替え -->
+    <main class="main" id="main">
+
+      <!-- 空のとき -->
+      <section class="view view-empty" id="view-empty">
+        <div class="empty-inner">
+          <h1>画面の一部を、あなたの言葉で見張る</h1>
+          <p>見たい場所をドラッグで選び、知りたいことを一言で書きます。<br>
+             その範囲を定期的に確かめて、値を記録し、条件を満たしたら知らせます。</p>
+          <button class="btn primary large" data-action="new">最初の見張りを作る</button>
+          <ol class="empty-steps">
+            <li><b>範囲を選ぶ</b><span>在庫表示、チャット欄、グラフなど</span></li>
+            <li><b>知りたいことを書く</b><span>「在庫ありになったら教えて」</span></li>
+            <li><b>判定を確かめて保存</b><span>AI が観点に分け、今の画面で試せます</span></li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- 見張りの詳細 -->
+      <section class="view view-detail" id="view-detail" hidden>
+        <div class="detail-head">
+          <div class="detail-title">
+            <h1 id="d-name"></h1>
+            <span class="state" id="d-state"></span>
+          </div>
+          <div class="detail-actions">
+            <button class="btn ghost" id="d-edit">判定を編集</button>
+            <button class="btn" id="d-run">今すぐ判定</button>
+            <button class="btn primary" id="d-toggle">開始</button>
+            <button class="btn icon ghost" id="d-more" aria-label="その他" title="その他">⋯</button>
+            <div class="menu" id="d-menu" hidden>
+              <button data-action="rename">名前を変える</button>
+              <button data-action="delete" class="danger">削除する</button>
+            </div>
+          </div>
+        </div>
+        <p class="detail-request" id="d-request"></p>
+
+        <div class="instrument" id="instrument">
+          <div class="panel">
+            <div class="panel-top">
+              <div class="readout">
+                <div class="readout-value" id="r-value">—</div>
+                <div class="readout-meta">
+                  <span class="readout-name" id="r-name"></span>
+                  <span class="readout-sub" id="r-sub"></span>
+                </div>
+              </div>
+              <div class="panel-tools">
+                <div class="seg" id="range-seg" role="group" aria-label="期間">
+                  <button data-range="1h">1時間</button>
+                  <button data-range="today">今日</button>
+                  <button data-range="7d">7日</button>
+                  <button data-range="all" class="on">すべて</button>
+                </div>
+                <button class="btn icon ghost" id="btn-zoom-reset" title="拡大を戻す（ダブルクリックでも戻ります）">⟲</button>
+                <button class="btn icon ghost" id="btn-focus" title="グラフを大きく表示（Esc で戻る）">⤢</button>
+              </div>
+            </div>
+            <div class="chart" id="chart"></div>
+            <div class="chart-hint">ドラッグで拡大、ホイールで拡大縮小、Shift+ホイールで移動、点をクリックするとその時の画像を表示します</div>
+          </div>
+
+          <aside class="observe">
+            <div class="observe-head">
+              <span id="o-label">最新の画像</span>
+              <button class="link" id="o-back" hidden>最新に戻す</button>
+            </div>
+            <div class="observe-img" id="o-img"><span>まだ撮影していません</span></div>
+            <div class="observe-time" id="o-time"></div>
+            <ul class="facets" id="o-facets"></ul>
+          </aside>
+        </div>
+
+        <div class="tabs" role="tablist">
+          <button role="tab" class="on" data-tab="log">記録</button>
+          <button role="tab" data-tab="plan">判定の設計</button>
+        </div>
+        <div class="tab-body" id="tab-log">
+          <table class="log"><thead><tr><th>時刻</th><th>状態</th><th class="num">値</th><th>判定モデル</th><th class="num">所要</th><th>メモ</th></tr></thead><tbody id="log-body"></tbody></table>
+        </div>
+        <div class="tab-body" id="tab-plan" hidden>
+          <pre class="plan-text" id="plan-text"></pre>
+        </div>
+      </section>
+
+      <!-- 見張りの作成・編集 -->
+      <section class="view view-editor" id="view-editor" hidden>
+        <div class="editor-scroll">
+          <div class="editor-head">
+            <h1 id="e-title">新しい見張り</h1>
+            <p>範囲と知りたいことを決め、判定の観点を整えて、今の画面で試してから保存します。</p>
+          </div>
+
+          <div class="editor-grid">
+            <!-- 左の列 -->
+            <div class="editor-col">
+              <section class="step">
+                <h2><span class="num">1</span>見張る範囲</h2>
+                <div class="region" id="e-region"><span>まだ選んでいません</span></div>
+                <div class="row">
+                  <button class="btn" id="e-pick">範囲を選ぶ</button>
+                  <span class="muted" id="e-region-size"></span>
+                </div>
+              </section>
+
+              <section class="step">
+                <h2><span class="num">2</span>知りたいこと</h2>
+                <textarea id="e-request" rows="3" placeholder="例: 在庫表示が「在庫あり」に変わったら教えて"></textarea>
+                <div class="chips" id="e-examples"></div>
+                <div class="row">
+                  <button class="btn primary" id="e-design">AI で観点に分ける</button>
+                  <span class="muted small" id="e-design-note"></span>
+                </div>
+              </section>
+
+            </div>
+
+            <!-- 右の列: 観点 -->
+            <div class="editor-col wide">
+              <section class="step">
+                <h2><span class="num">3</span>判定の観点</h2>
+                <p class="muted small">観点ごとに 0〜1 の値になり、重みを付けて平均したものが指標になります。重み 0 の観点は記録だけします。</p>
+                <div class="caveats" id="e-caveats" hidden></div>
+                <ol class="qlist" id="e-questions"></ol>
+                <div class="adder">
+                  <span class="adder-label">観点を追加</span>
+                  <div class="seg small" id="e-add-type">
+                    <button data-type="noul" class="on">はい／いいえ</button>
+                    <button data-type="choice">選択肢</button>
+                    <button data-type="score">段階評価</button>
+                  </div>
+                  <button class="btn" id="e-add-blank">自分で書く</button>
+                  <button class="btn" id="e-add-ai">AI に提案させる</button>
+                </div>
+                <p class="type-help" id="e-type-help"></p>
+                <details class="json">
+                  <summary>JSON で直接編集する</summary>
+                  <textarea id="e-json" rows="14" spellcheck="false"></textarea>
+                  <div class="row"><button class="btn" id="e-json-load">今の内容を JSON にする</button><button class="btn" id="e-json-apply">JSON を反映する</button></div>
+                </details>
+              </section>
+
+              <section class="step">
+                <h2><span class="num">4</span>測り方と通知</h2>
+                <label class="field"><span>名前</span><input id="e-name" type="text" placeholder="例: 在庫の見張り"></label>
+                <label class="field"><span>指標の名前</span><input id="e-metric-name" type="text" placeholder="例: 在庫ありらしさ"></label>
+                <label class="field"><span>判定モデル</span><select id="e-provider"></select></label>
+                <p class="hint" id="e-provider-hint" hidden></p>
+                <div class="field"><span>取得間隔</span>
+                  <div class="interval">
+                    <div class="seg small" id="e-interval-seg">
+                      <button data-sec="30">30秒</button><button data-sec="60">1分</button><button data-sec="300">5分</button><button data-sec="900">15分</button><button data-sec="1800">30分</button>
+                    </div>
+                    <input id="e-interval" type="number" min="10" step="10"><span class="muted">秒</span>
+                  </div>
+                </div>
+                <div class="notify-box">
+                  <label class="switch"><input type="checkbox" id="e-notify-on"><span></span>条件を満たしたら通知する</label>
+                  <div class="notify-rule" id="e-notify-rule">
+                    <div class="rule-line">
+                      <span>指標が</span>
+                      <input id="e-th" type="range" min="0" max="1" step="0.05">
+                      <output id="e-th-out" class="numfont">0.70</output>
+                      <select id="e-op"><option value=">=">以上</option><option value="<=">以下</option></select>
+                    </div>
+                    <div class="rule-line">
+                      <input id="e-consec" type="number" min="1" max="20"><span>回続いたら知らせ、同じ通知は</span>
+                      <input id="e-cool" type="number" min="0" step="5"><span>分あける</span>
+                    </div>
+                    <label class="field"><span>通知の文面</span><input id="e-message" type="text"></label>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+
+        <footer class="editor-foot">
+          <div class="trial" id="e-trial"><span class="muted">「今の画面で試す」で、保存前に値を確かめられます。</span></div>
+          <div class="foot-actions">
+            <button class="btn ghost" id="e-cancel">キャンセル</button>
+            <button class="btn" id="e-try">今の画面で試す</button>
+            <button class="btn" id="e-save">保存</button>
+            <button class="btn primary" id="e-save-start">保存して開始</button>
+          </div>
+        </footer>
+      </section>
+    </main>
+  </div>
+</div>
+
+<!-- 設定 -->
+<dialog class="dialog settings" id="dlg-settings">
+  <form method="dialog" class="settings-wrap" id="settings-form">
+    <nav class="settings-nav">
+      <h2>設定</h2>
+      <button type="button" data-sec="judge" class="on">判定モデル</button>
+      <button type="button" data-sec="llm">設計役の LLM</button>
+      <button type="button" data-sec="image">画像と記録</button>
+      <button type="button" data-sec="about">このアプリ</button>
+    </nav>
+    <div class="settings-body">
+      <section data-sec="judge">
+        <h3>判定モデル</h3>
+        <label class="field"><span>既定の判定モデル</span><select name="default_provider" id="s-default-provider"></select></label>
+        <p class="hint">見張りごとに、別の判定モデルを選ぶこともできます。</p>
+        <fieldset><legend>Cloudflare（Clef / Clef-flash）</legend>
+          <label class="field"><span>アカウントID</span><input name="cloudflare_account_id"></label>
+          <label class="field"><span>APIトークン</span><input name="cloudflare_api_token" type="password" data-secret></label>
+          <div class="row"><button type="button" class="btn small" data-test="clef-flash">接続テスト</button><span class="test-out"></span></div>
+        </fieldset>
+        <fieldset><legend>jev-local（imajev-4b・自前サーバー）</legend>
+          <label class="field"><span>サーバーURL</span><input name="jevlocal_base_url" placeholder="http://127.0.0.1:8008"></label>
+          <label class="field"><span>APIキー（KEV_API_KEY）</span><input name="jevlocal_api_key" type="password" data-secret></label>
+          <div class="row"><button type="button" class="btn small" data-test="jev-local">接続テスト</button><span class="test-out"></span></div>
+        </fieldset>
+        <fieldset><legend>Perplexity Decisions API</legend>
+          <label class="field"><span>APIキー</span><input name="perplexity_api_key" type="password" data-secret></label>
+          <label class="field"><span>モデル</span><input name="perplexity_model"></label>
+          <div class="row"><button type="button" class="btn small" data-test="perplexity">接続テスト</button><span class="test-out"></span></div>
+        </fieldset>
+        <fieldset><legend>SystemOne 互換（TypeSafe Jev など）</legend>
+          <label class="field"><span>エンドポイントURL</span><input name="systemone_base_url"></label>
+          <label class="field"><span>APIキー</span><input name="systemone_api_key" type="password" data-secret></label>
+          <label class="field"><span>モデル</span><input name="systemone_model"></label>
+          <label class="field"><span>画像の送り方</span><select name="systemone_image_mode"><option value="none">送らない（Jev は画像を読めません）</option><option value="clef">Clef と同じ形式</option><option value="perplexity">Perplexity と同じ形式</option></select></label>
+          <div class="row"><button type="button" class="btn small" data-test="systemone">接続テスト</button><span class="test-out"></span></div>
+        </fieldset>
+      </section>
+
+      <section data-sec="llm" hidden>
+        <h3>設計役の LLM</h3>
+        <p class="hint">知りたいことを観点に分けるときと、「LLM で代用」の判定に使います。OpenAI 互換の API（Chat Completions）なら何でも使えます。</p>
+        <label class="field"><span>接続先</span>
+          <select id="s-llm-preset">
+            <option value="https://openrouter.ai/api/v1">OpenRouter</option>
+            <option value="https://api.openai.com/v1">OpenAI</option>
+            <option value="http://localhost:1234/v1">LM Studio（このPC）</option>
+            <option value="http://localhost:11434/v1">Ollama（このPC）</option>
+            <option value="custom">その他（URL を入力）</option>
+          </select>
+        </label>
+        <label class="field"><span>Base URL</span><input name="llm_base_url" placeholder="https://…/v1"></label>
+        <label class="field"><span>APIキー</span><input name="llm_api_key" type="password" data-secret placeholder="ローカルのサーバーなら空欄で構いません"></label>
+        <label class="field"><span>設計に使うモデル</span><input name="planner_model" placeholder="例: gpt-5.6-luna / qwen3.5-9b"></label>
+        <label class="field"><span>代用判定に使うモデル</span><input name="llm_judge_model" placeholder="画像を読めるモデル"></label>
+        <div class="row"><button type="button" class="btn small" id="s-test-llm">接続テスト</button><span class="test-out" id="s-test-llm-out"></span></div>
+      </section>
+
+      <section data-sec="image" hidden>
+        <h3>画像と記録</h3>
+        <label class="field"><span>判定に送る画像の長辺（px）</span><input name="max_image_side" type="number" min="128"></label>
+        <label class="field"><span>変化なしとみなす差（0〜255）</span><input name="diff_threshold" type="number" min="0" step="0.5"></label>
+        <p class="hint">前回の撮影との差がこれより小さければ、判定を省いて前回の値を使います（API の利用を減らせます）。</p>
+        <label class="field"><span>振り返り用画像の長辺（px）</span><input name="shot_side" type="number" min="64"></label>
+        <label class="field"><span>見張りごとに残す画像の枚数</span><input name="max_shots" type="number" min="10"></label>
+        <label class="field"><span>判定の待ち時間（秒）</span><input name="request_timeout" type="number" min="5"></label>
+        <div class="row"><span class="muted small" id="s-path"></span><button type="button" class="btn small" id="s-open-dir">保存先を開く</button></div>
+      </section>
+
+      <section data-sec="about" hidden>
+        <h3>このアプリ</h3>
+        <p id="s-version" class="muted"></p>
+        <p class="hint">判定は完璧ではありません。見逃しや誤った通知は起こりえます。防犯や安全、お金に関わる用途には使わないでください。</p>
+        <p class="hint">選んだ範囲の画像は、選んだ判定モデルの提供元（設計時は設計役の LLM）に送られます。jev-local を使えば、判定の画像は自分のサーバーの外に出ません。</p>
+        <div class="row"><button type="button" class="btn small danger" id="s-quit">imiwatch を終了する</button></div>
+      </section>
+    </div>
+    <div class="settings-foot">
+      <span class="muted small">鍵の欄は、空欄のままなら変更しません。</span>
+      <div><button type="button" class="btn ghost" id="s-cancel">閉じる</button><button type="button" class="btn primary" id="s-save">保存</button></div>
+    </div>
+  </form>
+</dialog>
+
+<!-- 汎用の確認・入力 -->
+<dialog class="dialog small-dialog" id="dlg-prompt">
+  <form method="dialog">
+    <h3 id="p-title"></h3>
+    <p id="p-text" class="muted"></p>
+    <input id="p-input" type="text" hidden>
+    <div class="row end"><button value="cancel" class="btn ghost">キャンセル</button><button value="ok" class="btn primary" id="p-ok">OK</button></div>
+  </form>
+</dialog>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>
