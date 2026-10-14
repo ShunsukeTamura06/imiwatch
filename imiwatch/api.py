@@ -19,13 +19,16 @@ from typing import Any, Callable
 
 from PIL import Image, ImageDraw
 
-from . import __version__, capture, notify, planner, store
+from . import __version__, capture, net, notify, planner, store
 from .engine import MonitorRuntime, Result, Scheduler
 from .judges import PROVIDERS, JudgeError, make_judge, provider_label
 from .llm_client import LLMError, chat_json, llm_config
 from .plan import PlanError, describe_plan, validate_plan
 from .region_picker import pick_in_subprocess
 
+TEST_CONNECT_TIMEOUT = 4.0   # 接続テストでの、1つのアドレスあたりの接続の待ち時間
+TEST_READ_TIMEOUT = 20.0     # 接続テストでの、応答の待ち時間
+TEST_DEADLINE = 30.0         # 接続テスト全体の上限
 SHOT_RE = re.compile(r"^[0-9T]{8,20}\.jpg$")
 SERIES_CAP = 20000
 SPARK_POINTS = 48
@@ -446,6 +449,8 @@ class Api:
                 v = max(1, int(float(v)))
             elif k == "diff_threshold":
                 v = max(0.0, float(v))
+            elif k == "connect_timeout":
+                v = min(60.0, max(1.0, float(v)))
             elif k == "default_provider" and v not in PROVIDERS:
                 raise ValueError(f"不明な判定モデルです: {v}")
             elif k == "llm_api_format" and v not in ("openai", "anthropic"):
@@ -460,26 +465,75 @@ class Api:
         self._settings.update(new)
         return {}
 
+    def _provider_url(self, provider: str) -> str:
+        s = self._settings
+        if provider in ("clef", "clef-flash"):
+            return "https://api.cloudflare.com/"
+        if provider == "perplexity":
+            return "https://api.perplexity.ai/"
+        if provider == "systemone":
+            return s.get("systemone_base_url", "")
+        if provider == "jev-local":
+            return s.get("jevlocal_base_url", "")
+        if provider == "llm":
+            return s.get("llm_base_url", "")
+        return ""
+
+    def _test_settings(self) -> dict:
+        """接続テスト用: 接続は短く、応答も長くは待たない。"""
+        return {**self._settings, "connect_timeout": TEST_CONNECT_TIMEOUT,
+                "request_timeout": min(float(self._settings.get("request_timeout", 60)), TEST_READ_TIMEOUT)}
+
+    @staticmethod
+    def _with_deadline(fn: Callable[[], Any], seconds: float, what: str) -> Any:
+        """fn を別スレッドで動かし、seconds 秒で打ち切る（打ち切っても裏の通信は放っておく）。"""
+        box: dict = {}
+
+        def run():
+            try:
+                box["value"] = fn()
+            except Exception as e:  # noqa: BLE001
+                box["error"] = e
+
+        th = threading.Thread(target=run, daemon=True)
+        th.start()
+        th.join(seconds)
+        if th.is_alive():
+            raise RuntimeError(f"{what}: {seconds:g} 秒たっても結果が返らないため、打ち切りました。")
+        if "error" in box:
+            raise box["error"]
+        return box.get("value")
+
     @_safe
     def test_judge(self, provider: str = ""):
         provider = provider or self._settings.get("default_provider", "")
         img = Image.new("RGB", (320, 200), (70, 120, 200))
         ImageDraw.Draw(img).rectangle((110, 60, 210, 140), fill=(250, 250, 250))
         q = {"square": {"type": "noul", "instructions": "Is there a white square in the image?"}}
-        judge = make_judge(provider, self._settings)
-        answers, ms = judge.judge_timed(capture.to_data_url(img), q)
+        judge = make_judge(provider, self._test_settings())
+        judge.timeout = min(judge.timeout, TEST_READ_TIMEOUT)  # jev-local は普段は長めに待つが、テストでは待たない
+        url = self._provider_url(provider)
+        via = net.route(url) if url else ""
+        try:
+            answers, ms = self._with_deadline(lambda: judge.judge_timed(capture.to_data_url(img), q),
+                                              TEST_DEADLINE, "接続テスト")
+        except (JudgeError, RuntimeError) as e:
+            raise RuntimeError(f"{e}" + (f"（{via}）" if via and via not in str(e) else "")) from e
         a = answers.get("square", {})
-        return {"provider": provider, "latency_ms": ms,
+        return {"provider": provider, "latency_ms": ms, "route": via,
                 "answer": a.get("noul") if "noul" in a else ("判断保留" if a.get("abstained") else None)}
 
     @_safe
     def test_llm(self):
-        base, _, model = llm_config(self._settings)
+        settings = self._test_settings()
+        base, _, model = llm_config(settings)
         t0 = time.perf_counter()
-        data = chat_json(self._settings, 'JSON だけで {"ok": true} と答えてください。', "接続テスト",
-                         timeout=float(self._settings.get("request_timeout", 60)))
+        data = self._with_deadline(
+            lambda: chat_json(settings, 'JSON だけで {"ok": true} と答えてください。', "接続テスト",
+                              timeout=settings["request_timeout"]),
+            TEST_DEADLINE, "接続テスト")
         return {"latency_ms": int((time.perf_counter() - t0) * 1000), "model": model, "base_url": base,
-                "reply": data}
+                "route": net.route(base), "reply": data}
 
     @_safe
     def open_data_dir(self):

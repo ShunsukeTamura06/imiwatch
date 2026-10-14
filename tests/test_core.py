@@ -135,11 +135,11 @@ def test_clef_calls_api(monkeypatch):
         def json(self):
             return {"success": True, "result": {"answers": {"floor": {"type": "noul", "noul": 0.9}}}}
 
-    def fake_post(url, headers, json, timeout):
+    def fake_post(url, headers, json, timeout, **kw):
         sent.update(url=url, headers=headers, json=json)
         return Resp()
 
-    monkeypatch.setattr("imiwatch.judges.base.requests.post", fake_post)
+    monkeypatch.setattr("imiwatch.net.requests.post", fake_post)
     s = {**store.load_settings(), "cloudflare_account_id": "acc", "cloudflare_api_token": "tok"}
     ans = make_judge("clef-flash", s).judge("data:image/jpeg;base64,AA", {"floor": {"type": "noul", "instructions": "x"}})
     assert ans["floor"]["noul"] == 0.9
@@ -331,11 +331,11 @@ def test_jevlocal_end_to_end(monkeypatch):
                 res[f["id"]] = {"status": "answered", "value": value, "scores": scores}
             return {"request_id": self.body["request_id"], "model": "imajev-4b", "results": res}
 
-    def fake_post(url, headers, json, timeout):
+    def fake_post(url, headers, json, timeout, **kw):
         calls.append((url, headers.get("Authorization")))
         return Resp(json)
 
-    monkeypatch.setattr("imiwatch.judges.base.requests.post", fake_post)
+    monkeypatch.setattr("imiwatch.net.requests.post", fake_post)
     s = {**store.load_settings(), "jevlocal_base_url": "http://127.0.0.1:8008/", "jevlocal_api_key": "k"}
     q = api_questions(validate_plan(PLAN))
     q.update(_many_questions(7))

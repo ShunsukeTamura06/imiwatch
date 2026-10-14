@@ -11,6 +11,8 @@ from typing import Any
 
 import requests
 
+from . import net
+
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 
 
@@ -174,9 +176,9 @@ def chat_json(
 
 def _post(url: str, headers: dict, payload: dict, timeout: float) -> requests.Response:
     try:
-        return requests.post(url, headers=headers, json=payload, timeout=timeout)
-    except requests.RequestException as e:
-        raise LLMError(f"LLM（{url}）に接続できませんでした: {e}") from e
+        return net.post(url, headers, payload, read_timeout=timeout)
+    except net.NetError as e:
+        raise LLMError(f"設計役の LLM: {e}") from e
 
 
 def parse_json_loose(text: str) -> Any:

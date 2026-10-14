@@ -3,11 +3,13 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import requests
+from .. import net
 
 
 class JudgeError(RuntimeError):
-    pass
+    def __init__(self, message: str, kind: str = ""):
+        super().__init__(message)
+        self.kind = kind  # 通信の失敗なら net.NetError の種類（proxy / connect_timeout / refused など）
 
 
 STATE_TEXT = "画像は、ユーザーが画面上で選んだ範囲のスクリーンショットです。問いには画像の内容だけで答えてください。"
@@ -35,9 +37,10 @@ class Judge:
     # ------------------------------------------------------------------
     def _post(self, url: str, headers: dict, payload: dict) -> Any:
         try:
-            r = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
-        except requests.RequestException as e:
-            raise JudgeError(f"{self.name}: 通信に失敗しました: {e}") from e
+            r = net.post(url, headers, payload, read_timeout=self.timeout,
+                         connect_timeout=float(self.settings.get("connect_timeout", net.CONNECT_TIMEOUT)))
+        except net.NetError as e:
+            raise JudgeError(f"{self.name}: {e}", kind=e.kind) from e
         if r.status_code >= 400:
             body = r.text[:500]
             raise JudgeError(f"{self.name}: HTTP {r.status_code}: {body}")

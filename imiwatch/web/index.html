@@ -304,7 +304,9 @@
         <p class="hint">前回の撮影との差がこれより小さければ、判定を省いて前回の値を使います（API の利用を減らせます）。</p>
         <label class="field"><span>振り返り用画像の長辺（px）</span><input name="shot_side" type="number" min="64"></label>
         <label class="field"><span>見張りごとに残す画像の枚数</span><input name="max_shots" type="number" min="10"></label>
-        <label class="field"><span>判定の待ち時間（秒）</span><input name="request_timeout" type="number" min="5"></label>
+        <label class="field"><span>接続の待ち時間（秒）</span><input name="connect_timeout" type="number" min="1" max="60"></label>
+        <p class="hint">つながらない接続先を早くあきらめるための時間です。接続先のアドレスが複数あると、その数だけ待ちます。</p>
+        <label class="field"><span>応答の待ち時間（秒）</span><input name="request_timeout" type="number" min="5"></label>
         <div class="row"><span class="muted small" id="s-path"></span><button type="button" class="btn small" id="s-open-dir">保存先を開く</button></div>
       </section>
 

@@ -1028,25 +1028,33 @@ function bindSettings() {
   $("#s-llm-format").addEventListener("change", syncPreset);
   $("#s-cancel").onclick = () => $("#dlg-settings").close();
   $("#s-save").onclick = (e) => busy(e.currentTarget, async () => { await saveSettings(); $("#dlg-settings").close(); if (S.selected) renderHeader(); });
-  $$("[data-test]").forEach((b) => (b.onclick = (e) => busy(e.currentTarget, async () => {
-    const out = b.parentElement.querySelector(".test-out");
-    out.className = "test-out"; out.textContent = "保存して確かめています…";
+  // 接続テスト: 経過秒数を見せながら待つ（裏で上限 30 秒で打ち切られる）
+  const runTest = async (btn, out, call, okText) => {
+    out.className = "test-out";
+    const t0 = Date.now();
+    const tick = () => (out.textContent = `確かめています…（${Math.floor((Date.now() - t0) / 1000)} 秒）`);
+    tick();
+    const timer = setInterval(tick, 1000);
+    btn.classList.add("busy"); btn.disabled = true;
     try {
       await saveSettings(true);
-      const r = await api.call("test_judge", b.dataset.test);
+      const r = await call();
       out.className = "test-out ok";
-      out.textContent = `つながりました（${r.latency_ms} ms、白い四角がある確率 ${r.answer === null ? "—" : typeof r.answer === "number" ? fmt(r.answer) : r.answer}）`;
-    } catch (er) { out.className = "test-out ng"; out.textContent = er.message; }
-  })));
-  $("#s-test-llm").onclick = (e) => busy(e.currentTarget, async () => {
-    const out = $("#s-test-llm-out");
-    out.className = "test-out"; out.textContent = "保存して確かめています…";
-    try {
-      await saveSettings(true);
-      const r = await api.call("test_llm");
-      out.className = "test-out ok"; out.textContent = `つながりました（${r.model}、${r.latency_ms} ms）`;
-    } catch (er) { out.className = "test-out ng"; out.textContent = er.message; }
-  });
+      out.textContent = okText(r);
+    } catch (er) {
+      out.className = "test-out ng";
+      out.textContent = er.message;
+    } finally {
+      clearInterval(timer);
+      btn.classList.remove("busy"); btn.disabled = false;
+    }
+  };
+  $$("[data-test]").forEach((b) => (b.onclick = () => runTest(b, b.parentElement.querySelector(".test-out"),
+    () => api.call("test_judge", b.dataset.test),
+    (r) => `つながりました（${r.latency_ms} ms${r.route ? `、${r.route}` : ""}）。白い四角がある確率 ${typeof r.answer === "number" ? fmt(r.answer) : r.answer ?? "—"}`)));
+  $("#s-test-llm").onclick = () => runTest($("#s-test-llm"), $("#s-test-llm-out"),
+    () => api.call("test_llm"),
+    (r) => `つながりました（${r.model}、${r.latency_ms} ms、${r.route}）`);
   $("#s-open-dir").onclick = () => api.call("open_data_dir").catch(fail);
   $("#s-quit").onclick = async () => {
     const yes = await ask({ title: "imiwatch を終了しますか？", text: "見張りも止まります。", ok: "終了する", danger: true });

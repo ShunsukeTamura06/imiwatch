@@ -117,10 +117,11 @@ class JevLocalJudge(Judge):
             try:
                 data = self._post(url, headers, body)
             except JudgeError as e:
-                if "通信に失敗" in str(e):
+                if e.kind in ("refused", "connect_timeout", "connection"):
                     raise JudgeError(
-                        f"jev-local（{base_url}）に接続できません。EC2 で ./scripts/start.sh が動いているか、"
-                        "SSH トンネル（ssh -N -L 8008:127.0.0.1:8008 ec2-user@<EC2>）が張られているかを確認してください。"
+                        f"{e} jev-local（{base_url}）が動いているか、SSH トンネル"
+                        "（ssh -N -L 8008:127.0.0.1:8008 ec2-user@<EC2>）が張られているかを確認してください。",
+                        kind=e.kind,
                     ) from e
                 raise
             results = data.get("results") if isinstance(data, dict) else None

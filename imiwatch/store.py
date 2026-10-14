@@ -62,6 +62,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "jpeg_quality": 85,
     "diff_threshold": 2.0,  # 前回と比べた平均画素差（0-255）。これ未満なら判定を省略
     "request_timeout": 60,
+    "connect_timeout": 5,   # 接続の待ち時間（アドレスごと）。応答の待ち時間は request_timeout
     # グラフで振り返るための、判定ごとの縮小画像
     "shot_side": 480,
     "max_shots": 3000,  # 見張りごとに残す枚数（古いものから消す）

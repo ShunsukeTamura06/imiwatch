@@ -80,7 +80,7 @@ def test_endpoint_and_config():
 def test_chat_json_retries_without_response_format(monkeypatch):
     sent = []
 
-    def fake_post(url, headers, json, timeout):
+    def fake_post(url, headers, json, timeout, **kw):
         sent.append((url, dict(headers), dict(json)))
         if "response_format" in json:
             return Resp(400, '{"error": "response_format is not supported"}')
@@ -96,7 +96,7 @@ def test_chat_json_retries_without_response_format(monkeypatch):
 
 
 def test_chat_json_content_parts(monkeypatch):
-    monkeypatch.setattr(llm_client.requests, "post", lambda url, headers, json, timeout: Resp(
+    monkeypatch.setattr(llm_client.requests, "post", lambda url, headers, json, timeout, **kw: Resp(
         200, {"choices": [{"message": {"content": [{"type": "text", "text": '{"a": 1}'}]}}]}))
     s = {"llm_base_url": "https://api.openai.com/v1", "llm_api_key": "sk", "planner_model": "m"}
     assert llm_client.chat_json(s, "s", "u") == {"a": 1}
@@ -111,7 +111,7 @@ def test_chat_json_content_parts(monkeypatch):
 def test_suggest_question_forces_type(monkeypatch, qtype, question):
     seen = {}
 
-    def fake_post(url, headers, json, timeout):
+    def fake_post(url, headers, json, timeout, **kw):
         seen["system"] = json["messages"][0]["content"]
         return chat_reply({"id": "in-stock!", "question": question, "weight": 1.5, "reason": "別の観点"})
 
@@ -350,7 +350,7 @@ def test_anthropic_design_over_http():
 
 
 def test_anthropic_bad_reply_mentions_format(monkeypatch):
-    monkeypatch.setattr(llm_client.requests, "post", lambda url, headers, json, timeout: chat_reply({"x": 1}))
+    monkeypatch.setattr(llm_client.requests, "post", lambda url, headers, json, timeout, **kw: chat_reply({"x": 1}))
     s = {"llm_api_format": "anthropic", "llm_base_url": "https://gw", "llm_api_key": "k", "planner_model": "m"}
     with pytest.raises(llm_client.LLMError, match="形式"):
         llm_client.chat_json(s, "s", "u")  # OpenAI 形式の応答が返ってきた → 形式の設定を見直すよう案内
@@ -360,3 +360,56 @@ def test_api_rejects_bad_llm_format(api):
     assert api.save_settings({"llm_api_format": "gemini"})["ok"] is False
     assert api.save_settings({"llm_api_format": "anthropic", "llm_auth_header": "x-api-key"})["ok"]
     assert store.load_settings()["llm_api_format"] == "anthropic"
+
+
+# ------------------------------------------------------------------ 通信（待ち時間・プロキシ・理由の説明）
+def test_net_uses_short_connect_timeout(monkeypatch):
+    from imiwatch import net
+
+    seen = {}
+    monkeypatch.setattr(net.requests, "post", lambda url, headers, json, timeout, **kw: seen.setdefault("t", timeout) and Resp(200, {}))
+    net.post("https://api.example.com/x", {}, {}, read_timeout=60)
+    assert seen["t"] == (net.CONNECT_TIMEOUT, 60)
+
+
+def test_net_loopback_ignores_proxy(monkeypatch):
+    from imiwatch import net
+
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("NO_PROXY", "")
+    assert net.route("http://127.0.0.1:8008") == "直接（このPC）"
+    assert "プロキシ http://127.0.0.1:9" in net.route("http://example.com/")
+
+
+@pytest.mark.parametrize("exc,kind", [
+    ("ProxyError", "proxy"), ("SSLError", "ssl"), ("ConnectTimeout", "connect_timeout"),
+    ("ReadTimeout", "read_timeout"),
+])
+def test_net_explains_errors(exc, kind):
+    import requests
+
+    from imiwatch import net
+
+    e = getattr(requests.exceptions, exc)("boom")
+    err = net.explain(e, "https://api.example.com/v1", (5, 60))
+    assert err.kind == kind and "api.example.com" in str(err)
+
+
+def test_net_refused_is_fast_and_explained():
+    from imiwatch import net
+
+    t0 = time.time()
+    with pytest.raises(net.NetError) as e:
+        net.post("http://127.0.0.1:1/", {}, {}, read_timeout=30)
+    assert e.value.kind == "refused" and time.time() - t0 < 3
+
+
+def test_connection_test_has_deadline(api, monkeypatch):
+    from imiwatch import api as api_mod
+    from imiwatch.judges.mock import MockJudge
+
+    monkeypatch.setattr(api_mod, "TEST_DEADLINE", 0.5)
+    monkeypatch.setattr(MockJudge, "judge", lambda self, *a, **k: time.sleep(3))
+    t0 = time.time()
+    r = api.test_judge("mock")
+    assert r["ok"] is False and "打ち切りました" in r["error"] and time.time() - t0 < 2
